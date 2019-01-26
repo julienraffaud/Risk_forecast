@@ -44,18 +44,18 @@ legend(cryptos)
 
 % Accumulate log-returns for different time horizons %%%%%%%%%%%%%%%%%%%%%%
 
-% ret = cell(1, length(cryptos));
-% for i = 1:length(cryptos)
-%     aux = []; 
-%     for t = 0:tau:length(r(:,i))-tau
-%         aux = [aux; sum(r(t+1:t+tau,i))];
-%     end
-%     if (i>1)
-%         aux = [aux ret{i-1}];
-%     end
-%    ret{i} = aux;
-% end
-% ret(end)
+ ret = cell(1, length(cryptos));
+ for i = 1:length(cryptos)
+     aux = []; 
+     for t = 0:tau:length(r(:,i))-tau
+         aux = [aux; sum(r(t+1:t+tau,i))];
+     end
+     if (i>1)
+         aux = [aux ret{i-1}];
+     end
+    ret{i} = aux;
+ end
+ ret(end)
 
 % Plot log-returns
 figure(2); clf;
