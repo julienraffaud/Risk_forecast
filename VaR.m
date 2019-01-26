@@ -1,5 +1,3 @@
-%% Import and analyse financial time series series
-
 clear all;
 close all;
 
@@ -100,9 +98,3 @@ stats = array2table(stats);
 stats.Properties.VariableNames = {'Mean', 'Std', 'Skew', 'Kurtosis', 'Excess_K'};
 stats = addvars(stats, cryptos', 'Before', 'Mean');
 stats.Properties.VariableNames = {'Cryptocurrency','Mean', 'Std', 'Skew', 'Kurtosis', 'Excess_K'};
-stats
-
-% Plot of empirical PDF vs. Gaussian %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% watch this space..
-
