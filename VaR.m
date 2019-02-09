@@ -1,199 +1,293 @@
+%% Statistical characterisation of high-frequency time series
+% Parametric & non-parametric VaR/CVaR forecasting
+
 clear all;
 close all;
 
 % Inputs %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% 'LTC' 'XLM' 'TRX' 'BNB' 'ZEC' 'LSK' 'ADA' 'NEO'
-cryptos = {'EURUSD', 'LTC', 'TRX'};
-tau = 24;
+crypto = 'TRX';
+tau = 1;
 start_time = '02-Jan-2018 11:00:00';
 end_time = '14-Jun-2018 17:00:00';
 var = .05;
-pdf = 'Normal';
 
 % Import & format data %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-TT = cell(1, length(cryptos));
 TR = timerange(start_time,end_time);
-for i = 1:length(cryptos)
-    
-    if (strcmp(cryptos{i}, 'EURUSD'))
-        data = readtable(strcat(cryptos{i},'_merged.txt'));
-        table = table2timetable(data);
-        
-    else
-        data = importdata(strcat(cryptos{i},'_merged.txt'));
-        posix = data.data(:,2);
-        time = datetime(posix, 'ConvertFrom', 'Posixtime');
-        price = data.data(:, 12);
-        table = timetable(time, price);
-        table = table(TR,:);
-    end
+data = importdata(strcat(crypto,'_merged.txt'));
+posix = data.data(:,2);
+time = datetime(posix, 'ConvertFrom', 'Posixtime');
+price = data.data(:, 12);
+table = timetable(time, price);
+table = table(TR,:);
+table.Properties.VariableNames = {crypto};
 
-    table.Properties.VariableNames = {cryptos{i}};
-    if (i>1)
-        table = [TT{i-1} table];
-    end
-    TT{i} = table;
-end
-data = TT{end};
+% Compute log-returns %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Compute log-returns for each crypto %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+r = log(table{2:end,1:end}./table{1:end-1,1:end});
 
-r = log(data{2:end,1:end}./data{1:end-1,1:end});
+% Plot price evolution %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% preliminary plot of price %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% Plot price evolution
-figure(1); clf;
-semilogy(data.time, data{:, :})
-title('Cryptocurrencies price evolution, January 2018 - June 2018')
-ylabel(char(8364))
+figure(1); clf; hold on
+plot(table.time, table{:,1})
+title([crypto ' price evolution, January - June 2018'])
+ylabel(['Price (' char(8364) ')'])
 xlim(datetime(2018,[1 6],[2 14]))
-legend(cryptos)
+legend(crypto)
+set(gca,'FontSize', 15)
 
-% Accumulate log-returns for different time horizons %%%%%%%%%%%%%%%%%%%%%%
+% Accumulate log-returns for different time horizon %%%%%%%%%%%%%%%%%%%%%%%
 
-aux = cell(1, length(cryptos));
-for i = 1:length(cryptos)
-    r_i = r(:, i);
-    for t = 0:tau:length(r_i)-tau
-        aux{i} = [aux{i}; sum(r_i(t+1:t+tau))];
-    end
+aux = [];
+for t = 0:tau:length(r)-tau
+    aux = [aux; sum(r(t+1:t+tau))];  
 end
-r = cell2mat(aux);
+r = aux;
 
-%% Plot log-returns
-figure(2); clf;
-subplot(2, 1, 1)
-%plot(data.time(1:end-tau), r)
-plot(r)
-title('Cryptocurrencies log-returns, January 2018 - June 2018')
-ylabel('log-return')
-%xlim(datetime(2018,[1 6],[2 14]))
-subplot(2, 1, 2)
-%plot(data.time(1:end-tau), abs(r))
-plot(r)
-title('Cryptocurriencies absolute log-returns, January 2018 - June 2018')
-ylabel('absolute log-return')
-%xlim(datetime(2018,[1 6],[2 14]))
-
-%% Autocorrelation plot
-figure(3); clf; hold on;
-for i = 1:length(cryptos)
-    [c, lags] = xcorr(abs(r(:,i)), abs(r(:,i)));
-    c = c(lags>0);
-    lags = lags(lags>0);
-    c = c/c(1);
-    plot(lags(1:100), c(1:100))
-    title(" Autocorrelation of cryptocurrency absolute log-returns")
-    xlabel('Lags')
-    ylabel('Correlation')
-end
-legend(cryptos)
-
-%% Compute first four moments of each cryptocurrency's log returns %%%%%%%%%
+% Compute the first four moments %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 N = length(r(:,1));
 m = mean(r); % Compute mean and store value in variable
-std = std(r, 0, 1);
-sk = skewness(r);
-kurt = kurtosis(r);
-ex_kurt = kurt - 3;
-
+std = std(r, 0, 1); % Compute standard deviation
+sk = skewness(r); % Compute skew
+kurt = kurtosis(r); % Compute kurtosis
+ex_kurt = kurt - 3; % Compute excess kurtosis
 stats = [m', std', sk', kurt' ex_kurt'];
 stats = array2table(stats);
 stats.Properties.VariableNames = {'Mean', 'Std', 'Skew', 'Kurtosis', 'Excess_K'};
-stats = addvars(stats, cryptos', 'Before', 'Mean');
+stats = addvars(stats, {crypto}, 'Before', 'Mean');
 stats.Properties.VariableNames = {'Cryptocurrency','Mean', 'Std', 'Skew', 'Kurtosis', 'Excess_K'};
-stats
 
-%% Plot of empirical PDF vs. Gaussian %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Plot of empirical PDF vs Gaussian PDF with same mean/std %%%%%%%%%%%%%%%%
 
-for i = 1:length(cryptos)
-    mn = min(r(:,i));
-    mx = max(r(:,i));
-    x = linspace(mn, mx, 100);
-    g = exp(-(x-m(i)).^2/(2*std(i)^2))/sqrt(2*pi*std(i)^2);
-    NB = 100;
-    figure(3+i)
-    [b,a] = histnorm(r(:,i),NB); % Normalized histogram of returns with NB bins
-    semilogy(a,b,'ob','MarkerSize',8,'MarkerFaceColor','b')
-    hold on
-    semilogy(x,g,'r','LineWidth',2)
-    %set(gca,'FontSize',20)
-    xlabel('log-return')
-    ylim([0.03 10^2])
-    title(cryptos(i))
+minr = min(r);
+maxr = max(r);
+x = linspace(minr, maxr, 100);
+g = exp(-(x-m).^2/(2*std^2))/sqrt(2*pi*std^2);
+NB = 50;
+[b,a] = histnorm(r, NB); % Normalized histogram of returns with NB bins
+figure(2);
+semilogy(a, b,'ob','MarkerSize',6,'MarkerFaceColor','b')
+hold on;
+semilogy(x,g,'r','LineWidth',2)
+set(gca,'FontSize', 15)
+xlim(1.2*[minr maxr])
+ylim([0.03 100])
+title(crypto)
+legend('Empirical PDF', 'Normal PDF')
+xlabel('log-return')
+
+% Plot of Empirical CCDF vs Gaussian %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+pos_r = r(r>0);
+neg_r = abs(r(r<0));
+
+% positive
+xp = sort(pos_r); % Returns sorted in ascending order
+yp = 1:1:length(pos_r); 
+yp = 1 - yp/(length(pos_r)+1); % Calculating CCDF
+
+% negative
+xn = sort(neg_r); % Returns sorted in ascending order
+yn = 1:1:length(neg_r); 
+yn = 1 - yn/(length(neg_r)+1); % Calculating CCDF
+
+% normal
+c = (1 - erf((xp-m)/(std*sqrt(2))));
+
+% plot
+figure(3)
+loglog(xp,yp,'o','MarkerSize', 2, 'MarkerEdgeColor','b')
+hold on
+loglog(xn,yn,'o', 'MarkerSize', 2, 'MarkerEdgeColor', 'r')
+loglog(xp, c, 'green', 'LineWidth', 2)
+set(gca,'FontSize',15)
+ylim([1e-4 1])
+xlim([min(abs(r)) 1])
+xlabel('log-return')
+ylabel('complementary cumulative distribution')
+title([crypto, ' complementary cumulative log-return distribution'])
+legend({'positive' 'negative' 'normal'})
+
+% Split r into train-validate-test sets %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%r = r(randperm(length(r)));
+
+% fraction of dataset of each set
+train = 0.5;
+validate = 0.25;
+test = 0.25;
+
+% splitting set
+r_train = r(1:round(train*length(r)));
+r_v = r(length(r_train)+1:length(r_train)+1+round(validate*length(r)));
+r_test = r(length(r_train) + length(r_v) + 1:end);
+
+% Fitting PDFs on training set using bootstrap method %%%%%%%%%%%%%%%%%%%%%
+
+dists = {'normal', 'tLocationScale', 'Stable'};
+
+bts = 0.8; % Fraction of data to be retained in each bootstrap sample
+Nbts = 50; % Number of bootstrap samples
+alpha = 0.9; % Significance level
+bins = 30;
+
+% normal estimates
+nmus = cell(1, Nbts);
+nsigmas = cell(1, Nbts);
+
+% student-t estimates
+smus = cell(1, Nbts);
+ssigmas = cell(1, Nbts);
+nus = cell(1, Nbts);
+
+% stable estimates
+salphas = cell(1, Nbts);
+sbetas = cell(1, Nbts);
+sgams = cell(1, Nbts);
+sdeltas = cell(1, Nbts);
+
+for i = 1:length(dists)
+    
+    dist = dists{i};
+    
+    for i = 1:Nbts
+
+        r_bts = r_train(randperm(length(r_train))); % Random permutation of returns
+        r_bts = r_bts(1:round(bts*length(r_bts))); % Bootstrapping bts% of returns 
+        
+        params = fitdist(r_bts, dist);
+
+        switch dist
+
+            case 'tLocationScale'
+                smus{i} = params.mu;
+                nus{i} = params.nu;
+                ssigmas{i} = params.sigma;
+
+            case 'normal'
+                nmus{i} = params.mu;
+                nsigmas{i} = params.sigma;
+                
+            case 'Stable'
+                salphas{i} = params.alpha;
+                sbetas{i} = params.beta;
+                sgams{i} = params.gam;
+                sdeltas{i} = params.delta;
+        end
+
+    end
 end
 
-%% Plot of Empirical CCDF vs Gaussian %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% sorting normal
+nmus = sort(cell2mat(nmus));
+nsigmas = sort(cell2mat(nsigmas));
 
-for i = 1:length(cryptos)
-    
-    figure(3+length(cryptos)+i)
-    
-    r_i = r(:,i);
-    
-    pos_r = r_i(r_i>0);
-    neg_r = abs(r_i(r_i<0));
-    
-    % positive
-    xp = sort(pos_r); % Returns sorted in ascending order
-    yp = 1:1:length(pos_r); 
-    yp = 1 - yp/(length(pos_r)+1); % Calculating CCDF
-    
-    % negative
-    xn = sort(neg_r); % Returns sorted in ascending order
-    yn = 1:1:length(neg_r); 
-    yn = 1 - yn/(length(neg_r)+1); % Calculating CCDF
-    
-    % normal
-    c = (1 - erf((xp-m(i))/(std(i)*sqrt(2))));
+% sorting student
+smus = sort(cell2mat(smus));
+ssigmas = sort(cell2mat(ssigmas));
+nus = sort(cell2mat(nus));
 
-    loglog(xp,yp,'o','MarkerSize', 1, 'MarkerEdgeColor','b')
-    hold on
+% sorting stable
+salphas = sort(cell2mat(salphas));
+sbetas = sort(cell2mat(sbetas));
+sgams = sort(cell2mat(sgams));
+sdeltas = sort(cell2mat(sdeltas));
 
-    loglog(xn,yn,'o', 'MarkerSize', 1, 'MarkerEdgeColor', 'r')
-    loglog(xp, c, 'green', 'LineWidth', 1)
-    ylim([1e-4 1])
-    xlim([0 1])
-    xlabel('log-return')
-    ylabel('complementary cumulative distribution')
-    title([cryptos(i), ' complementary cumulative log-return distribution'])
-    legend({'positive' 'negative' 'normal'})
-    
-end
+% Plotting estimates of parameters of normal distribution
+figure(4); clf; hold on;
+subplot(2, 1, 1)
+histogram(nmus, bins, 'Normalization', 'pdf')
+xlabel('mu')
+hold on;
+subplot(2, 1, 2)
+histogram(nsigmas, bins, 'Normalization', 'pdf')
+xlabel('sigma')
 
-%% Empirical VaR %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Plotting estimates of parameters of student-t distribution
+figure(5); clf; hold on;
+subplot(3, 1, 1)
+histogram(smus, bins, 'Normalization', 'pdf')
+xlabel('mu')
+subplot(3, 1, 2)
+histogram(ssigmas, bins, 'Normalization', 'pdf')
+xlabel('sigma')
+subplot(3, 1, 3)
+histogram(nus, bins, 'Normalization', 'pdf')
+xlabel('nu')
 
-vars = cell(1, length(cryptos));
-for i = 1:length(cryptos)
-    v = quantile(r(:,i), var, 1);
-    vars{i} = v;
-end
-vars = cell2mat(vars');
+% Plotting estimates of parameters of stable distribution
+figure(6); clf; hold on;
+subplot(4, 1, 1)
+histogram(salphas, bins, 'Normalization', 'pdf')
+xlabel('alpha')
+subplot(4, 1, 2)
+histogram(sbetas, bins, 'Normalization', 'pdf')
+xlabel('beta')
+subplot(4, 1, 3)
+histogram(sgams, bins, 'Normalization', 'pdf')
+xlabel('gamma')
+subplot(4, 1, 4)
+histogram(sdeltas, bins, 'Normalization', 'pdf')
 
-cvars = cell(1, length(cryptos));
-for i = 1:length(cryptos)
-    r_i = r(:,i);
-    v = quantile(r_i, var, 1);
-    cv = mean(r_i(r_i<v));
-    cvars{i} = cv;
-end
-cvars = cell2mat(cvars');
-vartable = array2table([vars cvars]);
-vartable = addvars(vartable, cryptos', 'Before', 'Var1');
-vartable.Properties.VariableNames = {'Cryptocurrency', 'VaR', 'CVaR'};
-vartable
+% Assessing performance on validation set %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Parametric fit of PDF %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% normal dist parameters
+mu = mean(nmus);
+sigma = mean(nsigmas);
+pdn = makedist('Normal','mu',mu,'sigma',sigma);
 
-for i = 1:length(cryptos)
-    test_cdf = fitdist(r(:,i),pdf);
-    test_cdf
-    [h, p] = kstest(r(:,i),test_cdf);
-    figure(20+i)
-    qqplot(r(:,i), fitdist(r(:,i),pdf))
-    title(cryptos{i})
-end
+% student t dist parameters
+smu = mean(smus);
+snu = mean(nus);
+ssigma = mean(ssigmas);
+pds = makedist('tLocationScale','mu',smu,'sigma', ssigma, 'nu', snu);
+
+% stable dist parameters
+salpha = mean(salphas);
+sbeta = mean(sbetas);
+sgam = mean(sgams);
+sdelta = mean(sdeltas);
+pdstable = makedist('Stable', 'alpha', salpha, 'beta', sbeta, 'gam', sgam, 'delta', sdelta);
+
+% Plot pdf
+figure(7); hold on;
+x = linspace(min(r_train), max(r_train), 100);
+yn = pdf(pdn, x);
+ys = pdf(pds, x);
+yst = pdf(pdstable, x);
+hold on;
+semilogy(x,yn, 'r')
+hold on;
+semilogy(x,ys, 'b')
+hold on;
+semilogy(x, yst, 'black')
+hold on;
+histogram(r_v, 100, 'Normalization', 'pdf')
+
+% Kolmogorov-Smirnov test %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+[hn, pn] = kstest(r_v, pdn);
+[hs, ps] = kstest(r_v, pds);
+[hst, pst] = kstest(r_v, pdstable);
+result_ks = array2table([[hn, hs, hst]', [pn, ps, pst]']);
+result_ks.Properties.VariableNames = {'Hypothesis', 'p_value'};
+result_ks = addvars(result_ks, dists', 'Before', 'Hypothesis');
+result_ks.Properties.VariableNames = {'Model', 'Hypothesis', 'p_value'};
+result_ks
+
+% Quantile-Quantile plot %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+figure(8); clf; hold on;
+subplot(3, 1, 1)
+qqplot(r_v, pdn)
+subplot(3, 1, 2)
+qqplot(r_v, pds)
+subplot(3, 1, 3)
+qqplot(r_v, pdstable)
+
+% Test chosen model prediction of VaR & CVaR of test data %%%%%%%%%%%%%%%%%
+
+var_test = quantile(r_test, var, 1)
+forecast = icdf(pdstable, var)
