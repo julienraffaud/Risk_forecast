@@ -1,3 +1,4 @@
 # VaR_Estimation
 
-Statistical characterization of financial time series. Parametric and non-parametric estimation of VaR & CVaR.
+Statistical characterisation of high-frequency time series.
+Parametric & non-parametric VaR/CVaR forecasting.
