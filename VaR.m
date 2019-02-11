@@ -6,11 +6,13 @@ close all;
 
 % Inputs %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-crypto = 'TRX';
-tau = 1;
+crypto = 'LTC';
+tau = 1; % timescale
 start_time = '02-Jan-2018 11:00:00';
 end_time = '14-Jun-2018 17:00:00';
-var = .05;
+sets = 10; % k-folds
+train = .7; % fraction of each fold for training
+thresh = [.15 .1 .05]; % var thresholds
 
 % Import & format data %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -41,7 +43,9 @@ set(gca,'FontSize', 15)
 
 aux = [];
 for t = 0:tau:length(r)-tau
+    
     aux = [aux; sum(r(t+1:t+tau))];  
+    
 end
 r = aux;
 
@@ -110,184 +114,171 @@ ylabel('complementary cumulative distribution')
 title([crypto, ' complementary cumulative log-return distribution'])
 legend({'positive' 'negative' 'normal'})
 
-% Split r into train-validate-test sets %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Split r into k sets %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%r = r(randperm(length(r)));
+datasets = cell(1, sets);
 
-% fraction of dataset of each set
-train = 0.5;
-validate = 0.25;
-test = 0.25;
-
-% splitting set
-r_train = r(1:round(train*length(r)));
-r_v = r(length(r_train)+1:length(r_train)+1+round(validate*length(r)));
-r_test = r(length(r_train) + length(r_v) + 1:end);
-
-% Fitting PDFs on training set using bootstrap method %%%%%%%%%%%%%%%%%%%%%
-
-dists = {'normal', 'tLocationScale', 'Stable'};
-
-bts = 0.8; % Fraction of data to be retained in each bootstrap sample
-Nbts = 50; % Number of bootstrap samples
-alpha = 0.9; % Significance level
-bins = 30;
-
-% normal estimates
-nmus = cell(1, Nbts);
-nsigmas = cell(1, Nbts);
-
-% student-t estimates
-smus = cell(1, Nbts);
-ssigmas = cell(1, Nbts);
-nus = cell(1, Nbts);
-
-% stable estimates
-salphas = cell(1, Nbts);
-sbetas = cell(1, Nbts);
-sgams = cell(1, Nbts);
-sdeltas = cell(1, Nbts);
-
-for i = 1:length(dists)
+for i = 0:(sets - 1)
     
-    dist = dists{i};
+    set_length = round( length(r)/sets, -1 );
+    r_i = r(i*set_length+1:(i+1)*set_length);
+    datasets{i+1} = r_i; 
     
-    for i = 1:Nbts
-
-        r_bts = r_train(randperm(length(r_train))); % Random permutation of returns
-        r_bts = r_bts(1:round(bts*length(r_bts))); % Bootstrapping bts% of returns 
-        
-        params = fitdist(r_bts, dist);
-
-        switch dist
-
-            case 'tLocationScale'
-                smus{i} = params.mu;
-                nus{i} = params.nu;
-                ssigmas{i} = params.sigma;
-
-            case 'normal'
-                nmus{i} = params.mu;
-                nsigmas{i} = params.sigma;
-                
-            case 'Stable'
-                salphas{i} = params.alpha;
-                sbetas{i} = params.beta;
-                sgams{i} = params.gam;
-                sdeltas{i} = params.delta;
-        end
-
-    end
 end
 
-% sorting normal
-nmus = sort(cell2mat(nmus));
-nsigmas = sort(cell2mat(nsigmas));
+% VaR/CVaR computation using forward validation %%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Set ==> Distribution ==> Method ==> Threshold ==> Var, CVaR
 
-% sorting student
-smus = sort(cell2mat(smus));
-ssigmas = sort(cell2mat(ssigmas));
-nus = sort(cell2mat(nus));
+distributions = {'normal', 'tLocationScale'};
+meth = {'MLE'};
+p_var = cell(1, length(sets));
+var_mat = cell(1, length(sets));
+var_emp = cell(1, length(sets));
+kernel = cell(1, length(sets));
 
-% sorting stable
-salphas = sort(cell2mat(salphas));
-sbetas = sort(cell2mat(sbetas));
-sgams = sort(cell2mat(sgams));
-sdeltas = sort(cell2mat(sdeltas));
+for i = 1:sets
+    
+    % 1) Compute empirical VAR/ CVAR in each set
+    
+    ev = [];
+    ec = [];
+    for j = 1:length(thresh)
+        var_i = quantile(datasets{i}, thresh(j), 1);
+        cvar_i = mean(datasets{i}(datasets{i}<var_i));
+        ev = [ev var_i];
+        ec = [ec cvar_i];
+    end
+    var_mat{i} = 100*[ev ec; ev ec];
+    
+    % 2) Expand training set
+    
+    r_i = [];
+    for dt = 1:i
+        r_i = [r_i; datasets{dt}];
+    end
+    
+    % 3) Historical VaR/CVaR forecast (benchmark)
+    
+    evf = [];
+    ecf = [];
+    
+    for j = 1:length(thresh)
+        varf_i = quantile(r_i, thresh(j), 1);
+        cvarf_i = mean(r_i(r_i<varf_i));
+        evf = [evf varf_i];
+        ecf = [ecf cvarf_i];
+    end
+    
+    var_emp{i} = 100*[evf ecf; evf ecf];
+    
+    % 4) 70-30% split of r_i into train-validate sets
+    r_train = r_i(1:round(train*length(r_i)));
+    r_v = r_i(round(train*length(r_i))+1:end);
+    
+    % 5) KDE forecast
+    h = logspace(-3,-1,100); 
+    L = []; 
+    
+    for w = 1:length(h)
+        % Vector of Gaussian kernel values calculated in each point of validation set
+        p = gaussian_mix(r_v,r_train,h(w));  
+        aux = sum(log(p));  
+        L = [L; aux];
+    end
+    
+    % Identifying optimal value (i.e., argmax of log-likelihood)
+    h_opt = h(find(L == max(L)));
+    
+    % Building Kernel Density
+    x = linspace(1.5*min(r), max(r), 1000);
+    y = gaussian_mix(x,r_train,h_opt);
+    cdf_y = cumsum(y)/sum(y);
+    
+    kv = [];
+    % Computing kernel VaR
+    for j = 1:length(thresh)
+        kvar = x(find(round(cdf_y, 2) == round(thresh(j), 2), 1, 'first'));
+        kv = [kv kvar];
+    end
+    
+    % Computing kernel CVaR
+    for j = 1:length(thresh)
+        new_x = linspace(1.5*min(r), kvar(j), 1000);
+        new_y = gaussian_mix(x, r_train, h_opt);
+        kcvar = -(x(find(round(cdf_y, 2) == round(thresh(j), 2), 1, 'first')) - ...
+            x(find(round(cdf_y, 2) == round(0.01, 2), 1, 'first')));
+        kv = [kv kcvar];
+    end
+    
+    kernel{i} = 100*[kv; kv];
+    
+    % 5) Parametric forecast
+    
+    var_d = cell(1, length(distributions));
+    
+    for d = 1:length(distributions)
+        var_m = [];
+        for m = 1:length(meth)
+            method = meth{m};
+            switch method
+                case 'MLE'
+                    params = fitdist(r_train, distributions{d});
+                case 'MOM'
+                    % todo
+                    params = fitdist(r_train, distributions{d});
+            end
+            % create pdf object
+            switch distributions{d}
+                case 'normal'
+                    mu = params.mu;
+                    sigma = params.sigma;
+                    pd = makedist('normal', 'mu', mu, 'sigma', sigma);
+                case 'tLocationScale'
+                    mu = params.mu;
+                    sigma = params.sigma;
+                    nu = params.nu;
+                    pd = makedist('tLocationScale', 'mu', mu, 'sigma', sigma, 'nu', nu);
+            end
+            v = [];
+            % compute VaR squared error
+            for y = 1:length(thresh)
+                var = icdf(pd, thresh(y));
+                v = [v var];
+            end
+            % compute CVaR squared error
+            for y = 1:length(thresh)
+                x = linspace(5*min(r), icdf(pd, thresh(y)), 1000);
+                cvar = -trapz(pdf(pd, x))*abs((icdf(pd, thresh(y)) - 5*min(r)))/1000;
+                v = [v cvar];
+            end
+            var_m = [var_m v];
+        end
+        var_d{d} = var_m;
+    end
+    p_var{i} = 100*[var_d{1}; var_d{2}];
+end
 
-% Plotting estimates of parameters of normal distribution
-figure(4); clf; hold on;
-subplot(2, 1, 1)
-histogram(nmus, bins, 'Normalization', 'pdf')
-xlabel('mu')
-hold on;
-subplot(2, 1, 2)
-histogram(nsigmas, bins, 'Normalization', 'pdf')
-xlabel('sigma')
 
-% Plotting estimates of parameters of student-t distribution
-figure(5); clf; hold on;
-subplot(3, 1, 1)
-histogram(smus, bins, 'Normalization', 'pdf')
-xlabel('mu')
-subplot(3, 1, 2)
-histogram(ssigmas, bins, 'Normalization', 'pdf')
-xlabel('sigma')
-subplot(3, 1, 3)
-histogram(nus, bins, 'Normalization', 'pdf')
-xlabel('nu')
+%%
+% Measure Benchmark MSE
+mse_emp  = zeros(size(p_var{1}));
+for i = 1:sets-1
+    mse_emp = mse_emp + (var_emp{i} - var_mat{i+1}).^2;
+end
+mse_emp = mse_emp/(sets-1);
 
-% Plotting estimates of parameters of stable distribution
-figure(6); clf; hold on;
-subplot(4, 1, 1)
-histogram(salphas, bins, 'Normalization', 'pdf')
-xlabel('alpha')
-subplot(4, 1, 2)
-histogram(sbetas, bins, 'Normalization', 'pdf')
-xlabel('beta')
-subplot(4, 1, 3)
-histogram(sgams, bins, 'Normalization', 'pdf')
-xlabel('gamma')
-subplot(4, 1, 4)
-histogram(sdeltas, bins, 'Normalization', 'pdf')
+% Measure Kernel MSE
+mse_kernel = zeros(size(p_var{1}));
+for i = 1:sets-1
+    mse_kernel = mse_kernel + (kernel{i} - var_mat{i+1}).^2;
+end
+mse_kernel = mse_kernel/(sets-1);
 
-% Assessing performance on validation set %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Measure parametric method MSE
+mse_p = zeros(size(p_var{1}));
+for i = 1:sets-1
+    mse_p = mse_p + (p_var{i} - var_mat{i+1}).^2;
+end
+mse_p = mse_p/(sets-1);
 
-% normal dist parameters
-mu = mean(nmus);
-sigma = mean(nsigmas);
-pdn = makedist('Normal','mu',mu,'sigma',sigma);
-
-% student t dist parameters
-smu = mean(smus);
-snu = mean(nus);
-ssigma = mean(ssigmas);
-pds = makedist('tLocationScale','mu',smu,'sigma', ssigma, 'nu', snu);
-
-% stable dist parameters
-salpha = mean(salphas);
-sbeta = mean(sbetas);
-sgam = mean(sgams);
-sdelta = mean(sdeltas);
-pdstable = makedist('Stable', 'alpha', salpha, 'beta', sbeta, 'gam', sgam, 'delta', sdelta);
-
-% Plot pdf
-figure(7); hold on;
-x = linspace(min(r_train), max(r_train), 100);
-yn = pdf(pdn, x);
-ys = pdf(pds, x);
-yst = pdf(pdstable, x);
-hold on;
-semilogy(x,yn, 'r')
-hold on;
-semilogy(x,ys, 'b')
-hold on;
-semilogy(x, yst, 'black')
-hold on;
-histogram(r_v, 100, 'Normalization', 'pdf')
-
-% Kolmogorov-Smirnov test %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-[hn, pn] = kstest(r_v, pdn);
-[hs, ps] = kstest(r_v, pds);
-[hst, pst] = kstest(r_v, pdstable);
-result_ks = array2table([[hn, hs, hst]', [pn, ps, pst]']);
-result_ks.Properties.VariableNames = {'Hypothesis', 'p_value'};
-result_ks = addvars(result_ks, dists', 'Before', 'Hypothesis');
-result_ks.Properties.VariableNames = {'Model', 'Hypothesis', 'p_value'};
-result_ks
-
-% Quantile-Quantile plot %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-figure(8); clf; hold on;
-subplot(3, 1, 1)
-qqplot(r_v, pdn)
-subplot(3, 1, 2)
-qqplot(r_v, pds)
-subplot(3, 1, 3)
-qqplot(r_v, pdstable)
-
-% Test chosen model prediction of VaR & CVaR of test data %%%%%%%%%%%%%%%%%
-
-var_test = quantile(r_test, var, 1)
-forecast = icdf(pdstable, var)
+mse = [mse_emp; mse_kernel; mse_p]
