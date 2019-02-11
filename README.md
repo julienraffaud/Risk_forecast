@@ -1,9 +1,10 @@
 # Risk forecast
 
-Statistical characterisation of high-frequency time series. Parametric & non-parametric VaR/CVaR forecasting.
+Statistical characterisation of high-frequency time series. Parametric & non-parametric VaR/CVaR forecasting based on forward model validation.
 
-Parametric method:
-- density estimation using forward rolling cross-validation  
+Parametric methods:
+- MLE
+- Method of moments
 
 Non-parametric methods:  
 - historical simulation  
