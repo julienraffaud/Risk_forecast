@@ -6,7 +6,7 @@ close all;
 
 % Inputs %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-crypto = 'LTC';
+crypto = 'TRX';
 tau = 1; % timescale
 start_time = '02-Jan-2018 11:00:00';
 end_time = '14-Jun-2018 17:00:00';
@@ -16,13 +16,18 @@ thresh = [.15 .1 .05]; % var thresholds
 
 % Import & format data %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-TR = timerange(start_time,end_time);
-data = importdata(strcat(crypto,'_merged.txt'));
-posix = data.data(:,2);
-time = datetime(posix, 'ConvertFrom', 'Posixtime');
-price = data.data(:, 12);
-table = timetable(time, price);
-table = table(TR,:);
+if (strcmp(crypto, 'EURUSD'))
+    data = readtable(strcat(crypto,'_merged.txt'));
+    table = table2timetable(data);
+else
+    TR = timerange(start_time,end_time);
+    data = importdata(strcat(crypto,'_merged.txt'));
+    posix = data.data(:,2);
+    time = datetime(posix, 'ConvertFrom', 'Posixtime');
+    price = data.data(:, 12);
+    table = timetable(time, price);
+    table = table(TR,:);
+end
 table.Properties.VariableNames = {crypto};
 
 % Compute log-returns %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -189,24 +194,31 @@ for i = 1:sets
     % Identifying optimal value (i.e., argmax of log-likelihood)
     h_opt = h(find(L == max(L)));
     
-    % Building Kernel Density
-    x = linspace(1.5*min(r), max(r), 1000);
+    % Building kernel density
+    x = linspace(1.5*min(r), 1.5*max(r), 1000);
     y = gaussian_mix(x,r_train,h_opt);
     cdf_y = cumsum(y)/sum(y);
     
     kv = [];
     % Computing kernel VaR
     for j = 1:length(thresh)
-        kvar = x(find(round(cdf_y, 2) == round(thresh(j), 2), 1, 'first'));
+        
+        % sample from observed returns
+        u = datasample(r_train, 2000);
+        
+        % sample from normal distribution with standard deviation =
+        % optimal bandwith
+        s = normrnd(u, h_opt);
+        
+        %compute relevant quantile of sampled returns
+        kvar = quantile(s, thresh(j), 1);
+        
         kv = [kv kvar];
     end
     
     % Computing kernel CVaR
     for j = 1:length(thresh)
-        new_x = linspace(1.5*min(r), kvar(j), 1000);
-        new_y = gaussian_mix(x, r_train, h_opt);
-        kcvar = -(x(find(round(cdf_y, 2) == round(thresh(j), 2), 1, 'first')) - ...
-            x(find(round(cdf_y, 2) == round(0.01, 2), 1, 'first')));
+        kcvar = x(find(round(cdf_y, 2) == round(thresh(j), 2), 1, 'first'));
         kv = [kv kcvar];
     end
     
@@ -247,8 +259,8 @@ for i = 1:sets
             end
             % compute CVaR squared error
             for y = 1:length(thresh)
-                x = linspace(5*min(r), icdf(pd, thresh(y)), 1000);
-                cvar = -trapz(pdf(pd, x))*abs((icdf(pd, thresh(y)) - 5*min(r)))/1000;
+                x = linspace(1.5*min(r), icdf(pd, thresh(y)), 1000);
+                cvar = -trapz(pdf(pd, x))*abs((icdf(pd, thresh(y)) - 1.5*min(r)))/1000;
                 v = [v cvar];
             end
             var_m = [var_m v];
@@ -258,27 +270,23 @@ for i = 1:sets
     p_var{i} = 100*[var_d{1}; var_d{2}];
 end
 
+% Measure MSE
 
-%%
-% Measure Benchmark MSE
 mse_emp  = zeros(size(p_var{1}));
+mse_kernel = zeros(size(p_var{1}));
+mse_p = zeros(size(p_var{1}));
+
 for i = 1:sets-1
+
     mse_emp = mse_emp + (var_emp{i} - var_mat{i+1}).^2;
+    mse_kernel = mse_kernel + (kernel{i} - var_mat{i+1}).^2;
+    mse_p = mse_p + (p_var{i} - var_mat{i+1}).^2;
+    
 end
 mse_emp = mse_emp/(sets-1);
-
-% Measure Kernel MSE
-mse_kernel = zeros(size(p_var{1}));
-for i = 1:sets-1
-    mse_kernel = mse_kernel + (kernel{i} - var_mat{i+1}).^2;
-end
 mse_kernel = mse_kernel/(sets-1);
-
-% Measure parametric method MSE
-mse_p = zeros(size(p_var{1}));
-for i = 1:sets-1
-    mse_p = mse_p + (p_var{i} - var_mat{i+1}).^2;
-end
 mse_p = mse_p/(sets-1);
 
-mse = [mse_emp; mse_kernel; mse_p]
+mse = array2table( sqrt([mse_emp(1,:); mse_kernel(1, :); mse_p]) );
+mse = addvars(mse, {'HS', 'KDE', 'Normal', 'Student'}', 'Before', 'Var1');
+mse.Properties.VariableNames = {'Method', 'VaR_15', 'VaR_10', 'VaR_5', 'CVaR_15', 'CVaR_10', 'CVaR_5'};
