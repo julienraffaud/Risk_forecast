@@ -7,5 +7,5 @@ Parametric methods:
 - Method of moments
 
 Non-parametric methods:  
-- Historical simulation  
+- Bootstrap historical simulation  
 - Gaussian kernel density estimation
