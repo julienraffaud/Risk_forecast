@@ -8,4 +8,4 @@ Parametric methods:
 
 Non-parametric methods:  
 - Historical simulation  
-- Kernel density estimation
+- Gaussian kernel density estimation
